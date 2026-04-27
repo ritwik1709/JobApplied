@@ -1,0 +1,47 @@
+# Dependencies
+node_modules/
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Runtime/data artifacts
+*.pid
+*.pid.lock
+*.seed
+
+# Build output
+dist/
+build/
+coverage/
+
+# Playwright artifacts
+playwright-report/
+test-results/
+.playwright/
+
+# Local uploads/docs (keep sensitive personal docs out of git)
+uploads/
+resume.pdf
+
+# Caches
+.cache/
+.parcel-cache/
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Vercel / Render / misc deployment local files
+.vercel/
