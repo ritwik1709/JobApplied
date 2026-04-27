@@ -256,13 +256,23 @@ async function reactFill(page, selector, text) {
  * @param {Record<string, unknown>} userData
  * @returns {Promise<void>}
  */
-async function processJobApplication(jobUrl, userData) {
+async function processJobApplication(jobUrl, userData, options = {}) {
+	const reportStatus = typeof options.updateJobStatus === 'function' ? options.updateJobStatus : () => {};
+	const jobId = options.jobId || null;
+	const jobLabel = jobId ? `[Job ${jobId}]` : '[Agent]';
 	let browser;
 
 	try {
 		const isProduction = String(process.env.NODE_ENV || '').toLowerCase() === 'production';
 		browser = await chromium.launch({ headless: isProduction });
 		const page = await browser.newPage();
+		reportStatus(jobId, {
+			state: 'running',
+			currentUrl: jobUrl,
+			message: `Launching browser for ${jobUrl}`,
+			currentAction: 'launch_browser',
+			log: `${jobLabel} Launching browser for ${jobUrl}`
+		});
 
 		// Raise all Playwright timeouts globally – ATS pages can be slow.
 		page.setDefaultTimeout(60000);
@@ -273,6 +283,13 @@ async function processJobApplication(jobUrl, userData) {
 		let navSuccess = false;
 		for (let navAttempt = 1; navAttempt <= NAV_RETRIES; navAttempt++) {
 			try {
+				reportStatus(jobId, {
+					state: 'running',
+					currentUrl: jobUrl,
+					currentAction: 'navigate',
+					message: `Navigating to ${jobUrl}`,
+					log: `${jobLabel} Navigating to ${jobUrl} (attempt ${navAttempt}/${NAV_RETRIES})`
+				});
 				await page.goto(jobUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
 				navSuccess = true;
 				break;
@@ -295,13 +312,34 @@ async function processJobApplication(jobUrl, userData) {
 				await runResumeMemory.loadResumeFromText(resumeText);
 				hasResumeMemory = true;
 				console.log('[RAG] Loaded resumeText into vector memory for this run.');
+				reportStatus(jobId, {
+					state: 'running',
+					currentUrl: jobUrl,
+					currentAction: 'load_resume_text',
+					message: 'Resume text loaded and indexed.',
+					log: `${jobLabel} Resume text loaded and indexed.`
+				});
 			} catch (resumeLoadError) {
 				console.warn(
 					`[RAG] Failed to load resumeText for this run: ${resumeLoadError?.message || resumeLoadError}`
 				);
+				reportStatus(jobId, {
+					state: 'running',
+					currentUrl: jobUrl,
+					currentAction: 'load_resume_text',
+					message: 'Resume text could not be indexed; continuing without RAG fallback.',
+					log: `${jobLabel} Resume text failed to load: ${resumeLoadError?.message || resumeLoadError}`
+				});
 			}
 		} else {
 			console.warn('[RAG] No userData.resumeText provided; complex-question fallback may be limited.');
+			reportStatus(jobId, {
+				state: 'running',
+				currentUrl: jobUrl,
+				currentAction: 'load_resume_text',
+				message: 'No resumeText provided. Custom-question fallback may be limited.',
+				log: `${jobLabel} No resumeText provided.`
+			});
 		}
 
 		const jobGoal = 'Apply for a Backend Development Internship targeting Node.js and Express.';
@@ -312,6 +350,12 @@ async function processJobApplication(jobUrl, userData) {
 		const filledIds = new Set();
 
 		while (!isComplete && stallCount < MAX_STALLS) {
+			reportStatus(jobId, {
+				state: 'running',
+				currentUrl: jobUrl,
+				currentAction: 'observe',
+				message: 'Observing page and preparing next action.'
+			});
 			const simplifiedDOM = await getSimplifiedDOM(page);
 
 			// ── Submit guard ─────────────────────────────────────────────────
@@ -319,6 +363,12 @@ async function processJobApplication(jobUrl, userData) {
 			const remaining = buildPayloadChunk(simplifiedDOM, filledIds);
 			if (remaining.length === 0) {
 				console.log('[Agent] All fields filled — looking for submit button…');
+				reportStatus(jobId, {
+					state: 'running',
+					currentUrl: jobUrl,
+					currentAction: 'submit_check',
+					message: 'All fields appear filled. Looking for submit button.'
+				});
 				const submitBtn = simplifiedDOM.find((el) => {
 					const t = (el.type || '').toLowerCase();
 					const lbl = (el.label || '').toLowerCase();
@@ -345,6 +395,12 @@ async function processJobApplication(jobUrl, userData) {
 				console.warn(
 					`[Agent] No valid action (stall ${stallCount}/${MAX_STALLS}). Waiting before retry…`
 				);
+				reportStatus(jobId, {
+					state: 'running',
+					currentUrl: jobUrl,
+					currentAction: 'retry_wait',
+					message: `No valid action. Waiting before retry (${stallCount}/${MAX_STALLS}).`
+				});
 				await page.waitForTimeout(3000);
 				continue;
 			}
@@ -362,6 +418,12 @@ async function processJobApplication(jobUrl, userData) {
 
 			const targetSelector = `[data-ai-id="${aiId}"]`;
 			console.log(`[Agent] Action: ${action} → ${aiId}  value: "${value || ''}"`);
+			reportStatus(jobId, {
+				state: 'running',
+				currentUrl: jobUrl,
+				currentAction: action,
+				message: `Performing action ${action} on ${aiId}.`
+			});
 
 			switch (action) {
 				case 'click': {
@@ -598,9 +660,29 @@ async function processJobApplication(jobUrl, userData) {
 
 		if (stallCount >= MAX_STALLS) {
 			console.warn('[Agent] Max stalls reached – exiting without submission.');
+			reportStatus(jobId, {
+				state: 'failed',
+				currentUrl: jobUrl,
+				currentAction: 'stalled',
+				message: 'Max stalls reached. Automation exited without submission.',
+				log: `${jobLabel} Max stalls reached for ${jobUrl}.`
+			});
 		}
+		reportStatus(jobId, {
+			state: isComplete ? 'completed' : 'running',
+			currentUrl: jobUrl,
+			currentAction: isComplete ? 'completed' : 'idle',
+			message: isComplete ? 'Job application completed.' : 'Job application ended without completion.'
+		});
 	} catch (error) {
 		console.error('[Agent] Fatal error in processJobApplication:', error?.message || error);
+		reportStatus(jobId, {
+			state: 'failed',
+			currentUrl: jobUrl,
+			currentAction: 'error',
+			message: error?.message || 'Fatal error in processJobApplication.',
+			log: `${jobLabel} Fatal error: ${error?.message || error}`
+		});
 	} finally {
 		if (browser) await browser.close();
 	}
