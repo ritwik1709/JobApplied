@@ -1,6 +1,5 @@
 const form = document.getElementById('jobForm');
 const urlsField = document.getElementById('urls');
-const resumeTextField = document.getElementById('resumeText');
 const userDataField = document.getElementById('userData');
 const statusEl = document.getElementById('status');
 const clearBtn = document.getElementById('clearBtn');
@@ -58,15 +57,10 @@ form.addEventListener('submit', async (event) => {
       userData = parseUserData(userDataField.value);
     } catch (error) {
       setStatus(
-        `User Data JSON is invalid: ${error.message}. Keep resume text in the Resume Text box and only structured fields in JSON.`
+        `User Data JSON is invalid: ${error.message}. Paste either a full JSON object or the fragment inside userData.`
       );
       return;
     }
-  }
-
-  const resumeText = String(resumeTextField?.value || '').trim();
-  if (resumeText) {
-    userData.resumeText = resumeText;
   }
 
   setStatus('Submitting job application run...');
@@ -94,9 +88,6 @@ form.addEventListener('submit', async (event) => {
 
 clearBtn.addEventListener('click', () => {
   urlsField.value = '';
-  if (resumeTextField) {
-    resumeTextField.value = '';
-  }
   userDataField.value = '';
   setStatus('Idle.');
 });

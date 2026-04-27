@@ -19,6 +19,8 @@ const GROQ_MAX_RETRIES = Number(process.env.GROQ_MAX_RETRIES || 2);
 const GROQ_RETRY_DELAY_MS = Number(process.env.GROQ_RETRY_DELAY_MS || 2000);
 
 // ─── Singletons ───────────────────────────────────────────────────────────────
+const resumeMemory = new ResumeMemory();
+let isResumeLoaded = false;
 
 /** Lazy Groq client – only instantiated when GROQ_API_KEY is available (set by dotenv). */
 let _groqClient = null;
@@ -77,8 +79,11 @@ function isButtonElement(el) {
  */
 function buildPayloadChunk(domElements, filledIds = new Set()) {
 	const empty = domElements.filter((el) => {
+		// Remove all button/submit variants so LLM cannot prematurely submit
 		if (isButtonElement(el)) return false;
+		// Remove IDs the agent has already handled this session (beats slow React updates)
 		if (filledIds.has(el.ai_id)) return false;
+		// Remove fields where the DOM itself reports a value
 		if (el.currentValue && el.currentValue.trim()) return false;
 		return true;
 	});
@@ -140,7 +145,7 @@ async function determineNextAction(simplifiedDOM, jobGoal,userData) {
 		'--- APPLICANT PROFILE ---',
 		JSON.stringify(userData || {}, null, 2),
 		'--- SIMPLIFIED DOM CHUNK (unfilled fields only, max 5) ---',
-		JSON.stringify(chunk, null, 2)
+		JSON.stringify(chunk, null, 2)  // ✅ chunk, not full simplifiedDOM
 	].join('\n');
 
 	const messages = [
@@ -254,10 +259,8 @@ async function processJobApplication(jobUrl, userData) {
 	let browser;
 
 	try {
-		const isProduction = process.env.NODE_ENV === 'production';
-		browser = await chromium.launch({ headless: isProduction });
+		browser = await chromium.launch({ headless: false });
 		const page = await browser.newPage();
-		const runResumeMemory = new ResumeMemory();
 
 		// Raise all Playwright timeouts globally – ATS pages can be slow.
 		page.setDefaultTimeout(60000);
@@ -281,20 +284,9 @@ async function processJobApplication(jobUrl, userData) {
 		}
 		if (!navSuccess) return; // guard (unreachable, but safe)
 
-		const resumeText = String(userData?.resumeText || '').trim();
-		let hasResumeMemory = false;
-		if (resumeText) {
-			try {
-				await runResumeMemory.loadResumeFromText(resumeText);
-				hasResumeMemory = true;
-				console.log('[RAG] Loaded resumeText into vector memory for this run.');
-			} catch (resumeLoadError) {
-				console.warn(
-					`[RAG] Failed to load resumeText for this run: ${resumeLoadError?.message || resumeLoadError}`
-				);
-			}
-		} else {
-			console.warn('[RAG] userData.resumeText not provided; complex-question fallback may be limited.');
+		if (!isResumeLoaded) {
+			await resumeMemory.loadResume('./resume.pdf');
+			isResumeLoaded = true;
 		}
 
 		const jobGoal = 'Apply for a Backend Development Internship targeting Node.js and Express.';
@@ -385,14 +377,7 @@ async function processJobApplication(jobUrl, userData) {
 					}, targetSelector);
 
 					if (isFileInput) {
-						const resumePath = String(userData?.resumePath || '').trim();
-						if (!resumePath) {
-							console.warn(
-								`[Agent] type_text mapped to file upload for ${aiId}, but userData.resumePath is missing. Skipping.`
-							);
-							stallCount += 1;
-							break;
-						}
+						const resumePath = String(userData?.resumePath || './resume.pdf');
 						await page.locator(targetSelector).setInputFiles(resumePath);
 						filledIds.add(aiId);
 						console.log(
@@ -525,16 +510,8 @@ async function processJobApplication(jobUrl, userData) {
 				}
 
 				case 'upload_file': {
-					const resumePath = String(userData?.resumePath || '').trim();
-					if (!resumePath) {
-						console.warn(
-							`[Agent] upload_file requested for ${aiId}, but userData.resumePath is missing. Skipping.`
-						);
-						stallCount += 1;
-						break;
-					}
-					console.log(`[Agent] Uploading resume to ${aiId} from ${resumePath}`);
-					await page.locator(targetSelector).setInputFiles(resumePath);
+					console.log(`[Agent] Uploading resume to ${aiId}`);
+					await page.locator(targetSelector).setInputFiles('./resume.pdf');
 					filledIds.add(aiId);
 					break;
 				}
@@ -566,18 +543,10 @@ async function processJobApplication(jobUrl, userData) {
 					}
 
 					// ── Fallback to RAG pipeline (Ollama) ────────────────────────────
-					if (hasResumeMemory) {
-						const answer = await runResumeMemory.answerQuestion(question);
-						await reactFill(page, targetSelector, answer);
-						filledIds.add(aiId);
-						console.log(`[RAG] Answered "${question}" → "${answer.slice(0, 80)}…" ✔ (tracked)`);
-						break;
-					}
-
-					console.warn(
-						`[RAG] Cannot answer complex field for ${aiId} because userData.resumeText is missing or failed to load.`
-					);
-					stallCount += 1;
+					const answer = await resumeMemory.answerQuestion(question);
+					await reactFill(page, targetSelector, answer);
+					filledIds.add(aiId);
+					console.log(`[RAG] Answered "${question}" → "${answer.slice(0, 80)}…" ✔ (tracked)`);
 					break;
 				}
 
