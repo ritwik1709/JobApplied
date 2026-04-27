@@ -3,6 +3,7 @@ const urlsField = document.getElementById('urls');
 const userDataField = document.getElementById('userData');
 const statusEl = document.getElementById('status');
 const clearBtn = document.getElementById('clearBtn');
+const API_BASE_URL = 'https://jobapplied.onrender.com';
 
 function setStatus(message) {
   statusEl.textContent = message;
@@ -65,7 +66,7 @@ form.addEventListener('submit', async (event) => {
   setStatus('Submitting job application run...');
 
   try {
-    const response = await fetch('/api/v1/jobs/apply', {
+    const response = await fetch(`${API_BASE_URL}/api/v1/jobs/apply`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
