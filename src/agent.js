@@ -1,4 +1,5 @@
 const Groq = require('groq-sdk');
+process.env.PLAYWRIGHT_BROWSERS_PATH = process.env.PLAYWRIGHT_BROWSERS_PATH || '0';
 const { chromium } = require('playwright');
 
 const { getSimplifiedDOM } = require('./domParser');
@@ -259,7 +260,8 @@ async function processJobApplication(jobUrl, userData) {
 	let browser;
 
 	try {
-		browser = await chromium.launch({ headless: false });
+		const isProduction = String(process.env.NODE_ENV || '').toLowerCase() === 'production';
+		browser = await chromium.launch({ headless: isProduction });
 		const page = await browser.newPage();
 
 		// Raise all Playwright timeouts globally – ATS pages can be slow.

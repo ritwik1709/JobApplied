@@ -5,7 +5,7 @@
   "main": "server.js",
   "scripts": {
     "postinstall": "node scripts/install-playwright.js",
-    "start": "node server.js",
+    "start": "node scripts/install-playwright.js && node server.js",
     "dev": "node server.js"
   },
   "keywords": [],
