@@ -19,8 +19,6 @@ const GROQ_MAX_RETRIES = Number(process.env.GROQ_MAX_RETRIES || 2);
 const GROQ_RETRY_DELAY_MS = Number(process.env.GROQ_RETRY_DELAY_MS || 2000);
 
 // ─── Singletons ───────────────────────────────────────────────────────────────
-const resumeMemory = new ResumeMemory();
-let isResumeLoaded = false;
 
 /** Lazy Groq client – only instantiated when GROQ_API_KEY is available (set by dotenv). */
 let _groqClient = null;
@@ -258,6 +256,7 @@ async function processJobApplication(jobUrl, userData) {
 	try {
 		browser = await chromium.launch({ headless: false });
 		const page = await browser.newPage();
+		const runResumeMemory = new ResumeMemory();
 
 		// Raise all Playwright timeouts globally – ATS pages can be slow.
 		page.setDefaultTimeout(60000);
@@ -281,9 +280,20 @@ async function processJobApplication(jobUrl, userData) {
 		}
 		if (!navSuccess) return; // guard (unreachable, but safe)
 
-		if (!isResumeLoaded) {
-			await resumeMemory.loadResume('./resume.pdf');
-			isResumeLoaded = true;
+		const resumeText = String(userData?.resumeText || '').trim();
+		let hasResumeMemory = false;
+		if (resumeText) {
+			try {
+				await runResumeMemory.loadResumeFromText(resumeText);
+				hasResumeMemory = true;
+				console.log('[RAG] Loaded resumeText into vector memory for this run.');
+			} catch (resumeLoadError) {
+				console.warn(
+					`[RAG] Failed to load resumeText for this run: ${resumeLoadError?.message || resumeLoadError}`
+				);
+			}
+		} else {
+			console.warn('[RAG] userData.resumeText not provided; complex-question fallback may be limited.');
 		}
 
 		const jobGoal = 'Apply for a Backend Development Internship targeting Node.js and Express.';
@@ -374,7 +384,14 @@ async function processJobApplication(jobUrl, userData) {
 					}, targetSelector);
 
 					if (isFileInput) {
-						const resumePath = String(userData?.resumePath || './resume.pdf');
+						const resumePath = String(userData?.resumePath || '').trim();
+						if (!resumePath) {
+							console.warn(
+								`[Agent] type_text mapped to file upload for ${aiId}, but userData.resumePath is missing. Skipping.`
+							);
+							stallCount += 1;
+							break;
+						}
 						await page.locator(targetSelector).setInputFiles(resumePath);
 						filledIds.add(aiId);
 						console.log(
@@ -507,8 +524,16 @@ async function processJobApplication(jobUrl, userData) {
 				}
 
 				case 'upload_file': {
-					console.log(`[Agent] Uploading resume to ${aiId}`);
-					await page.locator(targetSelector).setInputFiles('./resume.pdf');
+					const resumePath = String(userData?.resumePath || '').trim();
+					if (!resumePath) {
+						console.warn(
+							`[Agent] upload_file requested for ${aiId}, but userData.resumePath is missing. Skipping.`
+						);
+						stallCount += 1;
+						break;
+					}
+					console.log(`[Agent] Uploading resume to ${aiId} from ${resumePath}`);
+					await page.locator(targetSelector).setInputFiles(resumePath);
 					filledIds.add(aiId);
 					break;
 				}
@@ -540,10 +565,18 @@ async function processJobApplication(jobUrl, userData) {
 					}
 
 					// ── Fallback to RAG pipeline (Ollama) ────────────────────────────
-					const answer = await resumeMemory.answerQuestion(question);
-					await reactFill(page, targetSelector, answer);
-					filledIds.add(aiId);
-					console.log(`[RAG] Answered "${question}" → "${answer.slice(0, 80)}…" ✔ (tracked)`);
+					if (hasResumeMemory) {
+						const answer = await runResumeMemory.answerQuestion(question);
+						await reactFill(page, targetSelector, answer);
+						filledIds.add(aiId);
+						console.log(`[RAG] Answered "${question}" → "${answer.slice(0, 80)}…" ✔ (tracked)`);
+						break;
+					}
+
+					console.warn(
+						`[RAG] Cannot answer complex field for ${aiId} because userData.resumeText is missing or failed to load.`
+					);
+					stallCount += 1;
 					break;
 				}
 

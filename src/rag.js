@@ -22,42 +22,57 @@ class ResumeMemory {
 			const parsed = await pdfParse(fileBuffer);
 			const resumeText = (parsed?.text || '').trim();
 
-			if (!resumeText) {
-				throw new Error('No extractable text found in resume PDF.');
-			}
-
-			const chunks = this._chunkText(resumeText);
-			this.vectorStore = [];
-
-			for (const chunk of chunks) {
-				const embeddingResponse = await axios.post(
-					`${OLLAMA_URL}/api/embeddings`,
-					{
-						model: OLLAMA_EMBED_MODEL,
-						prompt: chunk
-					},
-					{
-						timeout: 120000
-					}
-				);
-
-				const vector = embeddingResponse?.data?.embedding;
-				if (!Array.isArray(vector)) {
-					throw new Error('Invalid embedding response while ingesting resume chunks.');
-				}
-
-				this.vectorStore.push({
-					text: chunk,
-					vector
-				});
-			}
-
-			return this.vectorStore.length;
+			return this.loadResumeFromText(resumeText);
 		} catch (error) {
 			const errorDetails = error?.response?.data || error?.message || error;
 			console.error('Failed to load resume into memory:', errorDetails);
 			throw error;
 		}
+	}
+
+	/**
+	 * Ingest resume text directly, chunk it, and cache vectors in memory.
+	 * @param {string} resumeText
+	 * @returns {Promise<number>}
+	 */
+	async loadResumeFromText(resumeText) {
+		const normalizedText = String(resumeText || '').trim();
+
+		if (!normalizedText) {
+			throw new Error('No resume text provided.');
+		}
+
+		const chunks = this._chunkText(normalizedText);
+		if (!chunks.length) {
+			throw new Error('No chunkable resume text found.');
+		}
+
+		this.vectorStore = [];
+
+		for (const chunk of chunks) {
+			const embeddingResponse = await axios.post(
+				`${OLLAMA_URL}/api/embeddings`,
+				{
+					model: OLLAMA_EMBED_MODEL,
+					prompt: chunk
+				},
+				{
+					timeout: 120000
+				}
+			);
+
+			const vector = embeddingResponse?.data?.embedding;
+			if (!Array.isArray(vector)) {
+				throw new Error('Invalid embedding response while ingesting resume chunks.');
+			}
+
+			this.vectorStore.push({
+				text: chunk,
+				vector
+			});
+		}
+
+		return this.vectorStore.length;
 	}
 
 	/**
@@ -71,7 +86,7 @@ class ResumeMemory {
 		}
 
 		if (!this.vectorStore.length) {
-			throw new Error('Resume memory is empty. Call loadResume(filePath) first.');
+			throw new Error('Resume memory is empty. Call loadResume(filePath) or loadResumeFromText(text) first.');
 		}
 
 		try {
