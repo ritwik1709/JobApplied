@@ -4,7 +4,7 @@
   "description": "AI-driven web automation backend for job applications",
   "main": "server.js",
   "scripts": {
-    "postinstall": "npx playwright install chromium",
+    "postinstall": "node scripts/install-playwright.js",
     "start": "node server.js",
     "dev": "node server.js"
   },
