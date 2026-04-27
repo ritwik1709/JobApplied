@@ -254,7 +254,8 @@ async function processJobApplication(jobUrl, userData) {
 	let browser;
 
 	try {
-		browser = await chromium.launch({ headless: false });
+		const isProduction = process.env.NODE_ENV === 'production';
+		browser = await chromium.launch({ headless: isProduction });
 		const page = await browser.newPage();
 		const runResumeMemory = new ResumeMemory();
 
